@@ -406,7 +406,7 @@ public class AraTrustFingerService {
      * @return FeatureTemplateResult
      */
     public FeatureTemplateResult generalizeTemplate(long deviceHandle, byte[] pFeatureData1, byte[] pFeatureData2, byte[] pFeatureData3) {
-        byte[] pTemplateData = new byte[512];
+        byte[] pTemplateData = new byte[1024];
         int result = AraTrustFingerLibrary.INSTANCE.ARAFPSCAN_GeneralizeTemplate(deviceHandle, pFeatureData1, pFeatureData2, pFeatureData3, pTemplateData);
         return new FeatureTemplateResult(result, pTemplateData);
     }

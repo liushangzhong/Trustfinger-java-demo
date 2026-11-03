@@ -11,25 +11,20 @@ import java.io.UnsupportedEncodingException;
 /**
  * TrustFinger 指纹仪完整开发流程示例
  *
- * <p>按实际业务开发顺序组织：
+ * <p>按实际业务开发顺序组织（特征格式默认 Aratek Bione®）：
  * <ol>
  *   <li>初始化 SDK 运行时环境</li>
  *   <li>枚举并识别设备</li>
  *   <li>打开设备、获取设备参数</li>
- *   <li>采集指纹图像（原始/BMP/ISO/ANSI）</li>
- *   <li>提取指纹特征</li>
+ *   <li>采集指纹图像（原始/BMP）</li>
+ *   <li>提取指纹特征（采集 3 次，用于注册合成模板）</li>
+ *   <li>合成指纹模板（GeneralizeTemplate，3 特征合成 1 模板）</li>
  *   <li>图像格式转换与质量评估</li>
- *   <li>1:1 指纹比对</li>
+ *   <li>1:1 指纹验证（Verify：现场特征 vs 合成模板）</li>
  *   <li>关闭设备、释放 SDK</li>
  * </ol>
  *
- * <p>运行前需设置环境变量 AraTrustFingerLibraryPath 指向 TrustFinger.dll 所在目录，
- * 例如：
- * <pre>
- *   set AraTrustFingerLibraryPath=F:\AI-workbuddy\Trustfinger java demo\AratekTrustFingerSDK_Installer_V3.3.0.18.250926\SDK\x64
- *   set PATH=%PATH%;F:\AI-workbuddy\Trustfinger java demo\AratekTrustFingerSDK_Installer_V3.3.0.18.250926\SDK\x64
- * </pre>
- * 并将本类设为 mainClass 运行。需接好指纹仪。
+ * <p>免环境变量运行：DLL 已内置于 jar，直接 java -jar 即可。需接好指纹仪。
  *
  * @author demo
  * @date 2026-11-02
@@ -70,9 +65,13 @@ public class TrustFingerDemo {
     private static byte[] imageRaw;
     private static byte[] imageBmp;
 
-    /** 提取的特征数据 */
+    /** 提取的 3 个特征数据（注册阶段，用于合成模板） */
     private static byte[] feature1;
     private static byte[] feature2;
+    private static byte[] feature3;
+
+    /** 合成后的指纹模板（1024 字节，可存库用于后续验证） */
+    private static byte[] template;
 
     // ===================== 主流程 =====================
     public static void main(String[] args) {
@@ -102,21 +101,24 @@ public class TrustFingerDemo {
             // 4. 采集指纹图像
             step4_captureImage();
 
-            // 5. 提取指纹特征（采集两次，用于后续比对）
+            // 5. 提取指纹特征（采集 3 次，用于注册合成模板）
             step5_extractFeature();
 
-            // 6. 图像格式转换与质量评估
-            step6_convertAndQuality();
+            // 6. 合成指纹模板（3 特征 → 1 模板）
+            step6_generalizeTemplate();
 
-            // 7. 1:1 指纹比对
-            step7_verify();
+            // 7. 图像格式转换与质量评估
+            step7_convertAndQuality();
+
+            // 8. 1:1 指纹验证（现场特征 vs 合成模板）
+            step8_verify();
 
         } catch (Exception e) {
             System.out.println("[异常] 流程中断：" + e.getMessage());
             e.printStackTrace();
         } finally {
-            // 8. 关闭设备、释放 SDK（务必执行，避免句柄泄漏）
-            step8_closeAndFree();
+            // 9. 关闭设备、释放 SDK（务必执行，避免句柄泄漏）
+            step9_closeAndFree();
             System.out.println("结束时间：" + System.currentTimeMillis());
             System.out.println("================= 示例结束 =================");
         }
@@ -231,41 +233,76 @@ public class TrustFingerDemo {
 
     // ===================== 步骤 5：提取指纹特征 =====================
     /**
-     * 提取指纹特征（模板）。
-     * 采集两次同一手指，提取两个特征，用于演示 1:1 比对。
-     * 特征可存库用于后续 1:N 识别。
+     * 提取指纹特征（Aratek Bione® 格式）。
+     * 采集同一手指 3 次，提取 3 个特征，供后续合成模板使用。
+     * 实际业务中这就是"指纹注册"的第一步。
      */
     private static void step5_extractFeature() {
-        section("步骤5：提取指纹特征");
+        section("步骤5：提取指纹特征（3 次采集，Aratek Bione®）");
 
         // 第一次采集 + 提特征
-        System.out.println("  -> 第一次采集，请放手指...");
-        CaptureDataResult c1 = sdk.captureRawData(deviceHandle, TIMEOUT, imageWidth, imageHeight);
-        check(c1, "第一次采集");
-        FeatureResult f1 = sdk.extractFeature(deviceHandle, FINGER_POS);
-        check(f1, "第一次提特征");
-        feature1 = Results.copyBytes(f1.getFeatureData());
-        FileUtil.writeFile(feature1, OUTPUT_DIR, "feature1.template");
-        System.out.println("  -> 特征1长度：" + feature1.length + " 字节，已保存 feature1.template");
+        System.out.println("  -> 第 1/3 次采集，请放手指...");
+        captureAndExtract("feature1", true);
 
         // 第二次采集 + 提特征
-        System.out.println("  -> 第二次采集，请再次放手指...");
-        CaptureDataResult c2 = sdk.captureRawData(deviceHandle, TIMEOUT, imageWidth, imageHeight);
-        check(c2, "第二次采集");
-        FeatureResult f2 = sdk.extractFeature(deviceHandle, FINGER_POS);
-        check(f2, "第二次提特征");
-        feature2 = Results.copyBytes(f2.getFeatureData());
-        FileUtil.writeFile(feature2, OUTPUT_DIR, "feature2.template");
-        System.out.println("  -> 特征2长度：" + feature2.length + " 字节，已保存 feature2.template");
+        System.out.println("  -> 第 2/3 次采集，请再次放手指...");
+        captureAndExtract("feature2", false);
+
+        // 第三次采集 + 提特征
+        System.out.println("  -> 第 3/3 次采集，请再次放手指...");
+        captureAndExtract("feature3", false);
     }
 
-    // ===================== 步骤 6：图像转换与质量评估 =====================
+    /**
+     * 采集一次 + 提特征，保存到对应字段和文件。
+     *
+     * @param fieldName 特征字段名（feature1/feature2/feature3），用于存字段和文件
+     * @param first    是否点亮 LED（仅第一次采集时亮，后续静默）
+     */
+    private static void captureAndExtract(String fieldName, boolean first) {
+        if (first) {
+            setLed(true);
+        }
+        CaptureDataResult c = sdk.captureRawData(deviceHandle, TIMEOUT, imageWidth, imageHeight);
+        check(c, "采集");
+        FeatureResult f = sdk.extractFeature(deviceHandle, FINGER_POS);
+        check(f, "提特征");
+        byte[] data = Results.copyBytes(f.getFeatureData());
+        FileUtil.writeFile(data, OUTPUT_DIR, fieldName + ".template");
+        // 存入对应静态字段
+        if ("feature1".equals(fieldName)) {
+            feature1 = data;
+        } else if ("feature2".equals(fieldName)) {
+            feature2 = data;
+        } else if ("feature3".equals(fieldName)) {
+            feature3 = data;
+        }
+        System.out.println("  -> " + fieldName + " 长度：" + data.length + " 字节，已保存 " + fieldName + ".template");
+    }
+
+    // ===================== 步骤 6：合成指纹模板 =====================
+    /**
+     * 合成指纹模板（GeneralizeTemplate）。
+     * 把同一手指的 3 个特征合成 1 个模板（1024 字节），实际业务中这就是"指纹注册"完成。
+     * 模板可存库，后续验证时用现场采集的特征和库中模板做 1:1 比对。
+     */
+    private static void step6_generalizeTemplate() {
+        section("步骤6：合成指纹模板（3 特征 → 1 模板）");
+        FeatureTemplateResult gR = sdk.generalizeTemplate(deviceHandle, feature1, feature2, feature3);
+        check(gR, "generalizeTemplate 合成模板");
+        template = Results.copyBytes(gR.getFeatureTemplateData());
+        FileUtil.writeFile(template, OUTPUT_DIR, "general_template.bin");
+        System.out.println("  -> 合成模板长度：" + template.length + " 字节，已保存 general_template.bin");
+        System.out.println("  -> [注册完成] 该模板可存库，用于后续 1:N 识别或 1:1 验证");
+    }
+
+    // ===================== 步骤 7：图像转换与质量评估 =====================
     /**
      * 演示 V3.3 新增能力：图像格式转换（WSQ 压缩、ISO/ANSI 标准格式）
      * 以及图像质量评估（imgQuality、getNFIQScore）。
      */
-    private static void step6_convertAndQuality() {
-        section("步骤6：图像格式转换与质量评估");
+    private static void step7_convertAndQuality() {
+        section("步骤7：图像格式转换与质量评估");
 
         // 6.1 原始图像转 WSQ 压缩格式
         WSQResult wsqR = sdk.rawToWSQ(imageRaw, imageWidth, imageHeight, DPI, BIT_RATE);
@@ -283,31 +320,46 @@ public class TrustFingerDemo {
         System.out.println("  -> NFIQ 评分：" + nfiqR.getQuality() + "（0-50，越低越好）");
     }
 
-    // ===================== 步骤 7：1:1 指纹比对 =====================
+    // ===================== 步骤 8：1:1 指纹验证 =====================
     /**
-     * 1:1 指纹比对（验证身份）。
-     * 用两次采集的特征做比对，返回是否匹配及相似度。
-     * 实际业务中通常是"待验证特征 vs 库中已存特征"。
+     * 1:1 指纹验证。
+     * 现场采集一次手指 → 提取特征 → 与步骤6合成的模板做 verify 比对。
+     * 这就是"验证身份"的标准流程：现场特征 vs 库中模板。
      */
-    private static void step7_verify() {
-        section("步骤7：1:1 指纹比对");
+    private static void step8_verify() {
+        section("步骤8：1:1 指纹验证（现场特征 vs 合成模板）");
+
+        // 现场采集一次手指，提特征
+        System.out.println("  -> 请放手指进行验证采集...");
+        setLed(true);
+        CaptureDataResult c = sdk.captureRawData(deviceHandle, TIMEOUT, imageWidth, imageHeight);
+        check(c, "验证采集");
+        FeatureResult f = sdk.extractFeature(deviceHandle, FINGER_POS);
+        check(f, "验证提特征");
+        byte[] liveFeature = Results.copyBytes(f.getFeatureData());
+        setLed(false);
+
         System.out.println("  -> 安全等级：" + SECURITY_LEVEL);
-        VerifyResult vR = sdk.verify(deviceHandle, SECURITY_LEVEL, feature1, feature2);
-        check(vR, "verify 1:1 比对");
+        System.out.println("  -> 现场特征长度：" + liveFeature.length + " 字节");
+        System.out.println("  -> 合成模板长度：" + template.length + " 字节");
+
+        // Verify：现场特征 vs 合成模板
+        VerifyResult vR = sdk.verify(deviceHandle, SECURITY_LEVEL, liveFeature, template);
+        check(vR, "verify 1:1 验证");
         int match = vR.getpMmatch();
         int similarity = vR.getPnSimilarity();
         System.out.println("  -> 匹配结果：" + (match == 1 ? "匹配" : "不匹配") + " (1=匹配, 0=不匹配)");
         System.out.println("  -> 相似度：" + similarity + "（0-1000，越高越相似）");
-        System.out.println("  -> 结论：" + (match == 1 ? "✅ 同一手指" : "❌ 非同一手指，请重试"));
+        System.out.println("  -> 结论：" + (match == 1 ? "✅ 身份验证通过" : "❌ 验证失败，请重试"));
     }
 
-    // ===================== 步骤 8：关闭设备、释放 SDK =====================
+    // ===================== 步骤 9：关闭设备、释放 SDK =====================
     /**
      * 资源清理：关闭设备句柄、释放 SDK 运行时资源。
      * 必须在 finally 中调用，确保异常时也能释放。
      */
-    private static void step8_closeAndFree() {
-        section("步骤8：关闭设备、释放 SDK");
+    private static void step9_closeAndFree() {
+        section("步骤9：关闭设备、释放 SDK");
         try {
             BaseResult closeR = sdk.closeDevice(new long[]{deviceHandle});
             if (closeR.getCode() == OK) {
